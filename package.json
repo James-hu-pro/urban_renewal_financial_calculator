@@ -1,0 +1,35 @@
+{
+  "name": "urban-renewal-financial-calculator",
+  "version": "2.0.0",
+  "description": "Zero-dependency financial calculation engine for urban renewal (self-renovation) projects. NPV, IRR, sensitivity analysis, input validation, cash flow table.",
+  "main": "src/financial-calculator.js",
+  "files": [
+    "src/financial-calculator.js",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "财务测算说明.md"
+  ],
+  "scripts": {
+    "test": "node tests/financial-calculator.test.js"
+  },
+  "keywords": [
+    "urban-renewal",
+    "finance",
+    "npv",
+    "irr",
+    "real-estate",
+    "sensitivity-analysis",
+    "cash-flow",
+    "property-exchange",
+    "chinese-real-estate",
+    "investment-analysis"
+  ],
+  "author": "hujian",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hujian/urban-renewal-financial-calculator.git"
+  },
+  "homepage": "https://github.com/hujian/urban-renewal-financial-calculator#readme"
+}
