@@ -18,7 +18,7 @@ A zero-dependency, pure JavaScript financial calculation engine for urban renewa
 
 ## Installation
 
-### Node.js
+### 1. 作为 Node.js 模块使用
 
 ```bash
 npm install urban-renewal-financial-calculator
@@ -30,7 +30,41 @@ Or copy the single file:
 cp src/financial-calculator.js your-project/lib/
 ```
 
-### Browser
+### 2. 作为独立 API 服务使用（推荐用于多项目共享）
+
+```bash
+cd urban-renewal-financial-calculator
+node api-server.js        # 默认端口 3000
+PORT=3001 node api-server.js  # 自定义端口
+```
+
+服务启动后，其他项目可以通过 HTTP 调用：
+
+```javascript
+// 任何项目（JS/Python/Java 等）都可以调用
+const response = await fetch('http://localhost:3000/api/calculate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    originalArea: 56882,
+    aboveGroundNew: 115312,
+    undergroundNew: 60000,
+    salesPrice: 15000,
+  }),
+});
+const result = await response.json();
+console.log(result.data.metrics.netProfit);  // 净收益
+console.log(result.data.metrics.roi);         // ROI
+```
+
+API 服务特性：
+- ✅ 零依赖（纯 Node.js 原生模块）
+- ✅ CORS 跨域支持
+- ✅ 提供交互式测试页面（`http://localhost:3000/test.html`）
+- ✅ 内置 API 文档（`http://localhost:3000/`）
+- ✅ 支持预设参数快速调用（大方案/中方案/默认）
+
+### 3. 浏览器直接使用
 
 ```html
 <script src="financial-calculator.js"></script>
