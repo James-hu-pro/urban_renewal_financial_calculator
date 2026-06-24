@@ -139,7 +139,7 @@ const sensitivity = calc.sensitivityAnalysis({
 | Finance | `financeCostMode`, `discountRate` | 'fixed', 0.08 |
 | Thresholds | `minimumROI`, `maxPaybackYears` | 0.08, 15 |
 
-> **Note**: Defaults are from a specific project (Urumqi Railway Bureau). Always override with your own project data.
+> **Note**: Defaults are from a specific urban renewal project. Always override with your own project data.
 
 Full parameter table: see [中文文档](./财务测算说明.md)
 
