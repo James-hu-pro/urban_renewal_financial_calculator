@@ -528,6 +528,7 @@ function getTestPage() {
       <div class="form-field"><label>原产权面积 (㎡)</label><input type="number" id="originalArea" value="56882"></div>
       <div class="form-field"><label>地上新建面积 (㎡)</label><input type="number" id="aboveGroundNew" value="115312"></div>
       <div class="form-field"><label>地下新建面积 (㎡)</label><input type="number" id="undergroundNew" value="60000"></div>
+      <div class="form-field"><label>产权调换比例</label><input type="number" id="exchangeRatio" value="1.2" step="0.1"></div>
       <div class="form-field"><label>建设周期 (年)</label><input type="number" id="buildYears" value="3"></div>
     </div>
     
@@ -631,7 +632,7 @@ function getTestPage() {
 const API_BASE = '';
 
 function getParams() {
-  const ids = ['originalArea','aboveGroundNew','undergroundNew','salesPrice','rentPerDay',
+  const ids = ['originalArea','aboveGroundNew','undergroundNew','exchangeRatio','salesPrice','rentPerDay',
     'occupancyRate','commercialRentArea','aboveGroundUnitPrice','undergroundUnitPrice',
     'parkingSpaces','parkingRent','landPrice',
     'prelimUnitPrice','mgmtRate','marketingRate','leasingRate','salesCostRate',
