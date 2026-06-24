@@ -1,3 +1,6 @@
+
+[Uploading README.md…]()
+b8faf31a19d7fd134a82b9c7820755f7e773b2c1
 # Urban Renewal Financial Calculator
 
 A zero-dependency, pure JavaScript financial calculation engine for urban renewal (self-renovation) projects. Covers property exchange, surplus sales, commercial rental, and underground parking — with NPV, IRR, sensitivity analysis, and input validation.
