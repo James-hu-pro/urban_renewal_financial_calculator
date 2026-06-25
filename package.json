@@ -1,6 +1,6 @@
 {
   "name": "urban-renewal-financial-calculator",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Zero-dependency financial calculation engine for urban renewal (self-renovation) projects. NPV, IRR, sensitivity analysis, input validation, cash flow table.",
   "main": "src/financial-calculator.js",
   "files": [

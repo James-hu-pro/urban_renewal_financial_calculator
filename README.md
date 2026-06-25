@@ -156,8 +156,8 @@ No test framework required — the test file uses a simple hand-written `test()`
 
 - **`enableLandFeeDeduction`**: Land fee deduction via construction cost offset is a **city-specific policy** (not universal). Default is `false`.
 - **`exchangeRatio`**: 1:1.2 is common in many Chinese cities but varies by locality.
-- **NPV model**: Simplified — assumes total investment at Year 0, sales revenue at end of construction, rental income starting Year buildYears+1.
-- **Rent growth**: Compound annual growth model `(1 + rate)^year`.
+- **NPV model**: Simplified — assumes total investment at Year 0, sales revenue at end of construction, rental income starting Year buildYears+1. **Payback period now includes sales income** (previously only used annual net rent, causing inflated payback periods for projects with significant sales).
+- **Feasibility logic**: Dynamic metrics (NPV, IRR) are veto conditions. Payback period is a reference indicator only, not a veto — because urban renewal projects inherently have long payback due to rental holding.
 
 ## License
 
@@ -165,4 +165,4 @@ MIT — see [LICENSE](./LICENSE) file.
 
 ## Version
 
-**2.0.0** — Added NPV/IRR, sensitivity analysis, input validation, dynamic finance cost, cash flow table.
+**2.1.0** — Fixed payback period calculation (now includes sales income, previously only used net rent causing 60-80yr payback for valid projects); Changed feasibility veto logic to use dynamic metrics (NPV/IRR) only, payback as reference indicator; Added 5 regression tests.

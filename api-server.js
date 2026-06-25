@@ -71,7 +71,7 @@ const routes = {
     success(res, {
       status: 'ok',
       service: 'urban-renewal-financial-calculator',
-      version: '2.0.0',
+      version: '2.1.0',
       port: PORT,
       uptime: process.uptime(),
     });
@@ -323,7 +323,7 @@ function getAPIDocs() {
 </head>
 <body>
 <h1>🏗️ 城市更新财务测算引擎 API</h1>
-<p>版本 2.0.0 | 零依赖 Node.js 服务 | 支持 CORS 跨域</p>
+<p>版本 2.1.0 | 零依赖 Node.js 服务 | 支持 CORS 跨域</p>
 
 <div class="note">
   <strong>快速开始：</strong>打开浏览器的开发者工具（F12 → Console），直接复制下面的示例代码运行。
@@ -517,7 +517,7 @@ function getTestPage() {
 <body>
 <div class="container">
   <h1>🏗️ 城市更新财务测算引擎</h1>
-  <p class="subtitle">版本 2.0.0 | API 服务: http://localhost:${PORT}</p>
+  <p class="subtitle">版本 2.1.0 | API 服务: http://localhost:${PORT}</p>
 
   <!-- 输入面板：分类展示 -->
   <div class="panel">
@@ -529,6 +529,8 @@ function getTestPage() {
       <div class="form-field"><label>地上新建面积 (㎡)</label><input type="number" id="aboveGroundNew" value="115312"></div>
       <div class="form-field"><label>地下新建面积 (㎡)</label><input type="number" id="undergroundNew" value="60000"></div>
       <div class="form-field"><label>产权调换比例</label><input type="number" id="exchangeRatio" value="1.2" step="0.1"></div>
+      <div class="form-field"><label>地上产权调换面积 (㎡)</label><input type="number" id="aboveGroundExchange" value="65309"></div>
+      <div class="form-field"><label>地下产权调换面积 (㎡)</label><input type="number" id="undergroundExchange" value="2950"></div>
       <div class="form-field"><label>建设周期 (年)</label><input type="number" id="buildYears" value="3"></div>
     </div>
     
@@ -545,6 +547,7 @@ function getTestPage() {
     <div class="panel-title" style="margin-top:24px">📈 收入参数</div>
     <div class="form-grid">
       <div class="form-field"><label>销售单价 (元/㎡)</label><input type="number" id="salesPrice" value="15000"></div>
+      <div class="form-field"><label>地上可售面积 (㎡)</label><input type="number" id="aboveGroundSalesArea" value="50003"></div>
       <div class="form-field"><label>日租金 (元/㎡/天)</label><input type="number" id="rentPerDay" value="2.5" step="0.1"></div>
       <div class="form-field"><label>出租率</label><input type="number" id="occupancyRate" value="0.9" step="0.05"></div>
       <div class="form-field"><label>商业出租面积 (㎡)</label><input type="number" id="commercialRentArea" value="30000"></div>
@@ -632,7 +635,7 @@ function getTestPage() {
 const API_BASE = '';
 
 function getParams() {
-  const ids = ['originalArea','aboveGroundNew','undergroundNew','exchangeRatio','salesPrice','rentPerDay',
+  const ids = ['originalArea','aboveGroundNew','undergroundNew','exchangeRatio','aboveGroundExchange','undergroundExchange','salesPrice','aboveGroundSalesArea','rentPerDay',
     'occupancyRate','commercialRentArea','aboveGroundUnitPrice','undergroundUnitPrice',
     'parkingSpaces','parkingRent','landPrice',
     'prelimUnitPrice','mgmtRate','marketingRate','leasingRate','salesCostRate',
@@ -727,7 +730,11 @@ function renderResult(data) {
     ['地上新建面积', a.aboveGroundNew, '㎡'],
     ['地下新建面积', a.undergroundNew, '㎡'],
     ['总新建面积', a.totalNewArea, '㎡'],
+    ['产权调换比例', a.totalExchangeArea ? a.totalExchangeArea / a.originalArea : 0, ''],
+    ['地上产权调换面积', a.aboveGroundExchange, '㎡'],
+    ['地下产权调换面积', a.undergroundExchange, '㎡'],
     ['总产权调换面积', a.totalExchangeArea, '㎡'],
+    ['地上可售面积', a.aboveSalesArea, '㎡'],
     ['地上超配面积', a.aboveSurplus, '㎡'],
     ['地下超配面积', a.belowSurplus, '㎡'],
     ['总超配面积', a.totalSurplus, '㎡'],
@@ -830,7 +837,11 @@ async function loadPreset(name) {
       document.getElementById('originalArea').value = p.originalArea || '';
       document.getElementById('aboveGroundNew').value = p.aboveGroundNew || '';
       document.getElementById('undergroundNew').value = p.undergroundNew || '';
+      document.getElementById('exchangeRatio').value = p.exchangeRatio !== undefined ? p.exchangeRatio : '1.2';
+      document.getElementById('aboveGroundExchange').value = p.aboveGroundExchange !== undefined ? p.aboveGroundExchange : '';
+      document.getElementById('undergroundExchange').value = p.undergroundExchange !== undefined ? p.undergroundExchange : '';
       document.getElementById('salesPrice').value = p.salesPrice || '';
+      document.getElementById('aboveGroundSalesArea').value = p.aboveGroundSalesArea !== undefined ? p.aboveGroundSalesArea : '';
       document.getElementById('rentPerDay').value = p.rentPerDay || '';
       document.getElementById('occupancyRate').value = p.occupancyRate || '';
       document.getElementById('commercialRentArea').value = p.commercialRentArea || '';

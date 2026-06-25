@@ -2,6 +2,21 @@
 
 All notable changes to the Urban Renewal Financial Calculator module.
 
+## [2.1.0] - 2026-06-25
+
+### Fixed (Critical)
+- **Payback period calculation bug**: Previously computed as `totalInvestment / annualNetRent`, completely ignoring sales income. This caused 60-80+ year payback periods for projects with substantial sales revenue, making them always fail the `paybackExtreme` hard constraint and be rated "严重亏损" regardless of other metrics.
+  - New formula: `paybackPeriod = buildYears + (totalInvestment - aboveSalesIncome) / annualNetRent` (when sales < investment), or `paybackPeriod = buildYears` (when sales ≥ investment)
+- **Feasibility veto logic**: Removed `paybackExtreme` (payback > 2×maxPaybackYears) as a hard veto condition. Urban renewal projects inherently include rental holding components with long payback periods — payback should be a reference indicator, not a veto. Hard vetoes now only use dynamic metrics (NPV severe loss, NPV negative + IRR below hurdle).
+
+### Changed
+- **Feasibility weight adjustment**: NPV weight 30→35, payback weight 15→10, profit positive weight 10 (unchanged but now ranked above payback in importance hierarchy)
+- **Feasibility scoring**: Dynamic indicators (NPV, IRR) are primary decision criteria; static indicators (ROI, payback, net profit) are supplementary
+- **Report label**: "静态投资回收期" → "投资回收期（含销售收入）" to clarify calculation basis
+
+### Added
+- 5 regression tests for payback period fix and feasibility veto logic
+
 ## [2.0.0] - 2026-06-23
 
 ### Added

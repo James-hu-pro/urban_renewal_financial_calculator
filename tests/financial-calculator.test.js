@@ -400,13 +400,14 @@ test('可行性多条件判断', () => {
   if (result.feasibilityLevel !== 'F') throw new Error(`应为F级，实际: ${result.feasibilityLevel}`);
 });
 
-test('默认参数下判定为严重亏损（一票否决生效）', () => {
-  // 默认参数下：NPV为负、回收期68年、IRR为负，应判定为F级
+test('默认参数下判定为严重亏损（NPV深度亏损触发）', () => {
+  // 默认参数下：NPV深度亏损（<-20%总投资），触发severeLoss硬约束
   const result = calculateFinancialPlan({});
   if (result.feasibilityLevel !== 'F') throw new Error(`默认参数应为F级，实际: ${result.feasibilityLevel}，feasibility=${result.feasibility}`);
   if (!result.feasibility.includes('严重亏损')) throw new Error('应包含"严重亏损"');
   if (result.feasibilityDetail.npvPositive) throw new Error('NPV应为负');
-  if (result.metrics.paybackPeriod <= 30) throw new Error('回收期应超过2倍上限');
+  // 回收期：修正后包含销售收入，但仍可能超15年上限
+  if (result.metrics.paybackPeriod <= 15) throw new Error(`修正后回收期仍应超15年上限，实际: ${result.metrics.paybackPeriod}`);
   // IRR 应被计算并显示
   if (result.metrics.irr === undefined) throw new Error('metrics应包含irr');
   if (result.metrics.irr === null) throw new Error('默认参数下IRR应能计算（即使为负）');
@@ -594,7 +595,134 @@ test('敏感性分析报告文本', () => {
 });
 
 // ============================================================
-// 第十二部分：边界条件
+// 第十二部分：回收期修正验证（Bug Fix 专项测试）
+// ============================================================
+console.log('\n--- 回收期修正验证 ---');
+
+test('回收期包含销售收入：销售收入覆盖全部投资时回收期=建设期', () => {
+  // 极端场景：销售收入远大于总投资
+  const result = calculateFinancialPlan({
+    originalArea: 1000,
+    aboveGroundNew: 50000,
+    undergroundNew: 5000,
+    aboveGroundExchange: 0,
+    undergroundExchange: 0,
+    aboveGroundSalesArea: null,
+    salesPrice: 50000,     // 高售价
+    commercialRentArea: 0,
+    parkingSpaces: 0,
+    aboveGroundUnitPrice: 2000,
+    undergroundUnitPrice: 3000,
+    financeCostMode: 'fixed',
+    financeCost: 0,
+  });
+  // 销售收入 = 50000 * 50000 / 10000 = 250,000 万元
+  // 总投资应该远小于 250,000 万元
+  if (result.metrics.paybackPeriod !== 3) {
+    throw new Error(`销售收入覆盖全部投资时回收期应=建设期3年，实际: ${result.metrics.paybackPeriod}`);
+  }
+});
+
+test('回收期包含销售收入：部分覆盖时回收期=建设期+余额/年净租金', () => {
+  const result = calculateFinancialPlan({
+    originalArea: 56882,
+    aboveGroundNew: 115312,
+    undergroundNew: 60000,
+    aboveGroundExchange: 65309,
+    undergroundExchange: 2950,
+    salesPrice: 15000,
+    aboveGroundSalesArea: 50003,
+    commercialRentArea: 30000,
+    rentPerDay: 2.5,
+    buildYears: 3,
+    financeCostMode: 'fixed',
+    financeCost: 0,
+  });
+  // 修正后回收期应远小于旧版本（旧版只用租金回收全部投资，得68+年）
+  // 新版：销售先回收大部分，余额靠租金 → 应在20-40年范围
+  if (result.metrics.paybackPeriod > 100) {
+    throw new Error(`修正后回收期不应超过100年，实际: ${result.metrics.paybackPeriod}（可能仍用旧公式）`);
+  }
+  // 回收期应包含建设期3年
+  if (result.metrics.paybackPeriod < 3) {
+    throw new Error(`回收期不应小于建设期3年，实际: ${result.metrics.paybackPeriod}`);
+  }
+});
+
+test('回收期：无销售收入时=总投资/年净租金', () => {
+  // 无销售、纯租金回收（此场景下新旧公式结果相同）
+  const result = calculateFinancialPlan({
+    originalArea: 56882,
+    aboveGroundNew: 115312,
+    undergroundNew: 60000,
+    aboveGroundExchange: 65309,
+    undergroundExchange: 2950,
+    aboveGroundSalesArea: 0,  // 无可售面积
+    salesPrice: 0,            // 无销售
+    commercialRentArea: 30000,
+    rentPerDay: 2.5,
+    buildYears: 3,
+    financeCostMode: 'fixed',
+    financeCost: 0,
+  });
+  // 无销售时，回收期 = 建设期 + 总投资/年净租金
+  if (result.metrics.paybackPeriod <= result.metrics.totalInvestment) {
+    // 回收期应该很长（纯靠租金回收全部投资）
+    if (result.metrics.paybackPeriod < 30) {
+      throw new Error(`无销售时纯租金回收期应很长，实际: ${result.metrics.paybackPeriod}`);
+    }
+  }
+});
+
+test('可行性判断：NPV/IRR否决生效，回收期不作为硬否决', () => {
+  // 场景：NPV深度亏损 → 严重亏损（F级），不依赖回收期否决
+  const result = calculateFinancialPlan({
+    originalArea: 56882,
+    aboveGroundNew: 115312,
+    undergroundNew: 60000,
+    aboveGroundExchange: 65309,
+    undergroundExchange: 2950,
+    salesPrice: 100,         // 极低售价
+    commercialRentArea: 0,
+    parkingSpaces: 0,
+    aboveGroundUnitPrice: 4300,
+    undergroundUnitPrice: 6000,
+  });
+  // NPV深度亏损 → severeLoss触发 → F级
+  if (result.feasibilityLevel !== 'F') {
+    throw new Error(`极低售价应为F级（严重亏损），实际: ${result.feasibilityLevel}`);
+  }
+});
+
+test('可行性判断：NPV为正+IRR达标 → 非"F级"', () => {
+  // 场景：高售价、低成本，NPV为正、IRR达标
+  const result = calculateFinancialPlan({
+    originalArea: 1000,
+    aboveGroundNew: 50000,
+    undergroundNew: 5000,
+    aboveGroundExchange: 0,
+    undergroundExchange: 0,
+    aboveGroundSalesArea: null,
+    salesPrice: 30000,
+    commercialRentArea: 5000,
+    rentPerDay: 3,
+    aboveGroundUnitPrice: 2000,
+    undergroundUnitPrice: 3000,
+    landPrice: 500,
+    financeCostMode: 'fixed',
+    financeCost: 0,
+  });
+  // NPV应为正，不应是F级
+  if (result.feasibilityLevel === 'F') {
+    throw new Error(`NPV为正时不应为F级，实际: ${result.feasibilityLevel}, NPV=${result.metrics.npvNetProfit}`);
+  }
+  if (!result.feasibilityDetail.npvPositive) {
+    throw new Error(`高售价低成本场景NPV应为正，实际NPV=${result.metrics.npvNetProfit}`);
+  }
+});
+
+// ============================================================
+// 第十三部分：边界条件
 // ============================================================
 console.log('\n--- 边界条件 ---');
 

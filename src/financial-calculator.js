@@ -322,9 +322,21 @@ class UrbanRenewalCalculator {
     const totalInvestment = totalCost;
     const roi = totalInvestment > 0 ? (netProfit / totalInvestment) * 100 : 0;
 
-    // 静态回收期
+    // 静态回收期（改进版：包含销售收入 + 逐年净租金）
+    // 逻辑：建设期末一次性回收销售收入，之后逐年回收净租金
     const annualNetRent = annualTotalRentYear1 * (1 - p.operatingCostRate - p.rentTaxRate);
-    const paybackPeriod = annualNetRent > 0 ? totalInvestment / annualNetRent : Infinity;
+    let paybackPeriod;
+    if (aboveSalesIncome >= totalInvestment) {
+      // 销售收入已覆盖全部投资，回收期 = 建设期
+      paybackPeriod = p.buildYears;
+    } else if (annualNetRent > 0) {
+      // 销售收入覆盖部分，剩余靠租金逐年回收
+      const remainingAfterSales = totalInvestment - aboveSalesIncome;
+      paybackPeriod = p.buildYears + remainingAfterSales / annualNetRent;
+    } else {
+      // 年净租金为0或负，无法通过租金回收剩余投资
+      paybackPeriod = Infinity;
+    }
 
     // 盈亏平衡销售单价
     const breakEvenPrice = aboveSalesArea > 0 ?
@@ -352,7 +364,7 @@ class UrbanRenewalCalculator {
       irrStatus = '错误: ' + e.message;
     }
 
-    // 11. 可行性判断（改进版：六层判定 + 加权计分 + 一票否决）
+    // 11. 可行性判断（改进版：动态指标优先否决 + 加权计分）
     const feasibilityDetail = {
       profitPositive: netProfit > 0,
       roiAboveMinimum: roi >= p.minimumROI * 100,
@@ -362,21 +374,22 @@ class UrbanRenewalCalculator {
       irrAboveTarget: irrValue !== null && irrValue > p.discountRate * 150,
     };
 
-    // 一票否决（硬约束）
+    // 一票否决（硬约束）—— 仅以动态指标（NPV、IRR）为否决依据
+    // 回收期不作为硬否决条件，因为城市更新项目含持有出租属性，
+    // 回收期天然偏长，应作为辅助参考而非否决依据
     const hardConstraints = {
       npvNegative: npvNetProfit < 0,
       irrBelowHurdle: irrValue !== null && irrValue <= p.discountRate * 100,
-      paybackExtreme: paybackPeriod > p.maxPaybackYears * 2,
       severeLoss: npvNetProfit < -totalCost * 0.2,
     };
 
-    // 加权计分
+    // 加权计分（调整权重：动态指标权重更高，回收期降为辅助）
     const scoreItems = [
-      { name: 'npvPositive',    weight: 30, pass: npvNetProfit > 0 },
+      { name: 'npvPositive',    weight: 35, pass: npvNetProfit > 0 },
       { name: 'irrAboveHurdle', weight: 25, pass: irrValue !== null && irrValue > p.discountRate * 100 },
       { name: 'roiAboveMin',    weight: 15, pass: roi >= p.minimumROI * 100 },
-      { name: 'paybackWithin',  weight: 15, pass: paybackPeriod <= p.maxPaybackYears },
       { name: 'profitPositive', weight: 10, pass: netProfit > 0 },
+      { name: 'paybackWithin',  weight: 10, pass: paybackPeriod <= p.maxPaybackYears },  // 降低权重：从15→10
       { name: 'irrAboveTarget', weight: 5,  pass: irrValue !== null && irrValue > p.discountRate * 150 },
     ];
 
@@ -384,11 +397,11 @@ class UrbanRenewalCalculator {
       sum + (item.pass ? item.weight : 0), 0
     );
 
-    // 六层等级判定
+    // 六层等级判定（改进版：仅 NPV/IRR 作为否决条件）
     let feasibility, feasibilityLevel, color;
     const riskNotes = [];
 
-    if (hardConstraints.severeLoss || hardConstraints.paybackExtreme) {
+    if (hardConstraints.severeLoss) {
       feasibility = '严重亏损（建议终止）';
       feasibilityLevel = 'F';
       color = '#8B0000';
@@ -862,7 +875,7 @@ class UrbanRenewalCalculator {
   │ 总投资：${m.totalInvestment.toLocaleString()} 万元                              │
   │ 净收益（未折现）：${m.netProfit.toLocaleString()} 万元                           │
   │ 投资回报率（ROI）：${m.roi.toFixed(2)}%（行业基准 ≥ ${(p.minimumROI*100).toFixed(0)}%）        │
-  │ 静态投资回收期：${m.paybackPeriod.toFixed(2)} 年（上限 ${p.maxPaybackYears} 年）              │
+  │ 投资回收期：${m.paybackPeriod.toFixed(2)} 年（含销售收入，上限 ${p.maxPaybackYears} 年）              │
   │ 盈亏平衡销售单价：${m.breakEvenPrice.toFixed(0)} 元/㎡                          │
   │ 盈亏平衡出租率：${(m.breakEvenOccupancy * 100).toFixed(2)}%                       │
   ├─────────────────────────────────────────────────────┤
