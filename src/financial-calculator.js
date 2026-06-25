@@ -327,15 +327,88 @@ class UrbanRenewalCalculator {
     const breakEvenOccupancy = this.calculateBreakEvenOccupancy(p, aboveSalesIncome, totalCost, totalRentIncome,
       annualCommercialRentYear1, annualParkingRentYear1);
 
-    // 10. 可行性判断（多条件）
+    // 10. 计算 IRR（在 calculate 内部直接计算，避免递归调用 calculateIRR）
+    let irrValue = null;
+    let irrStatus = '未计算';
+    try {
+      // 构建简化的结果对象用于现金流构建
+      const irrResultStub = {
+        cost: { totalCost: totalCost },
+        income: { aboveSalesIncome: aboveSalesIncome }
+      };
+      const irrCashflows = this.buildCashflowArrayFromResult(irrResultStub);
+      irrValue = this.calculateIRRFromCashflows(irrCashflows);
+      irrStatus = irrValue !== null ? '已计算' : '计算失败';
+    } catch (e) {
+      irrStatus = '错误: ' + e.message;
+    }
+
+    // 11. 可行性判断（改进版：六层判定 + 加权计分 + 一票否决）
     const feasibilityDetail = {
       profitPositive: netProfit > 0,
       roiAboveMinimum: roi >= p.minimumROI * 100,
       paybackWithinLimit: paybackPeriod <= p.maxPaybackYears,
       npvPositive: npvNetProfit > 0,
+      irrAboveHurdle: irrValue !== null && irrValue > p.discountRate * 100,
+      irrAboveTarget: irrValue !== null && irrValue > p.discountRate * 150,
     };
-    const allConditionsMet = feasibilityDetail.profitPositive && feasibilityDetail.roiAboveMinimum && feasibilityDetail.paybackWithinLimit;
-    const feasibility = allConditionsMet ? '可行' : (netProfit > 0 ? '基本可行（需关注风险）' : '不可行');
+
+    // 一票否决（硬约束）
+    const hardConstraints = {
+      npvNegative: npvNetProfit < 0,
+      irrBelowHurdle: irrValue !== null && irrValue <= p.discountRate * 100,
+      paybackExtreme: paybackPeriod > p.maxPaybackYears * 2,
+      severeLoss: npvNetProfit < -totalCost * 0.2,
+    };
+
+    // 加权计分
+    const scoreItems = [
+      { name: 'npvPositive',    weight: 30, pass: npvNetProfit > 0 },
+      { name: 'irrAboveHurdle', weight: 25, pass: irrValue !== null && irrValue > p.discountRate * 100 },
+      { name: 'roiAboveMin',    weight: 15, pass: roi >= p.minimumROI * 100 },
+      { name: 'paybackWithin',  weight: 15, pass: paybackPeriod <= p.maxPaybackYears },
+      { name: 'profitPositive', weight: 10, pass: netProfit > 0 },
+      { name: 'irrAboveTarget', weight: 5,  pass: irrValue !== null && irrValue > p.discountRate * 150 },
+    ];
+
+    const totalScore = scoreItems.reduce((sum, item) => 
+      sum + (item.pass ? item.weight : 0), 0
+    );
+
+    // 六层等级判定
+    let feasibility, feasibilityLevel, color;
+    const riskNotes = [];
+
+    if (hardConstraints.severeLoss || hardConstraints.paybackExtreme) {
+      feasibility = '严重亏损（建议终止）';
+      feasibilityLevel = 'F';
+      color = '#8B0000';
+    } else if (hardConstraints.npvNegative && hardConstraints.irrBelowHurdle) {
+      feasibility = '不可行';
+      feasibilityLevel = 'E';
+      color = '#DC143C';
+    } else if (hardConstraints.npvNegative || hardConstraints.irrBelowHurdle) {
+      feasibility = '高风险（不建议投资）';
+      feasibilityLevel = 'D';
+      color = '#FF8C00';
+    } else if (totalScore >= 90) {
+      feasibility = '优秀项目';
+      feasibilityLevel = 'A';
+      color = '#006400';
+    } else if (totalScore >= 75) {
+      feasibility = '可行';
+      feasibilityLevel = 'B';
+      color = '#228B22';
+    } else {
+      feasibility = '边界可行（需大幅优化）';
+      feasibilityLevel = 'C';
+      color = '#DAA520';
+    }
+
+    if (hardConstraints.npvNegative) riskNotes.push('NPV为负，考虑资金时间价值后净亏损');
+    if (hardConstraints.irrBelowHurdle) riskNotes.push(`IRR ${irrValue !== null ? irrValue.toFixed(2) : '--'}%低于折现率${(p.discountRate*100).toFixed(1)}%`);
+    if (paybackPeriod > p.maxPaybackYears) riskNotes.push(`回收期${paybackPeriod.toFixed(1)}年超出上限${p.maxPaybackYears}年`);
+    if (roi < p.minimumROI * 100) riskNotes.push(`ROI ${roi.toFixed(2)}%低于基准${(p.minimumROI*100).toFixed(0)}%`);
 
     return {
       area: {
@@ -400,10 +473,17 @@ class UrbanRenewalCalculator {
         npvROI: this.round2(npvROI),
         discountRate: p.discountRate,
         rentGrowthRate: p.rentGrowthRate,
+        // IRR 相关
+        irr: irrValue,
+        irrStatus: irrStatus,
       },
 
-      feasibility: feasibility,
-      feasibilityDetail: feasibilityDetail,
+      feasibility,
+      feasibilityLevel,
+      feasibilityColor: color,
+      feasibilityScore: totalScore,
+      feasibilityRiskNotes: riskNotes,
+      feasibilityDetail,
 
       // 保留旧字段兼容
       netProfit: this.roundWan(netProfit),
@@ -428,66 +508,82 @@ class UrbanRenewalCalculator {
     return npv;
   }
 
-  // ==================== IRR 计算 ====================
+  // ==================== IRR 计算（改进版）====================
 
   /**
-   * 计算内部收益率（使 NPV = 0 的折现率）
-   * 使用牛顿迭代法，基于简化现金流模型：
-   *   第0年：-totalCost（一次性投入）
-   *   第buildYears年：+aboveSalesIncome（销售收入）
-   *   第buildYears+1 ~ buildYears+rentYears年：+annualNetRentByYear（逐年净租金）
-   *
-   * @param {number} precision - 精度（默认0.0001，即0.01%）
-   * @param {number} maxIterations - 最大迭代次数
-   * @returns {number|null} IRR（百分比），null表示无法收敛
+   * 从计算结果构建现金流数组（使用原始参数避免精度损失）
+   * @param {Object} result - calculate() 的返回结果
+   * @returns {number[]} 现金流数组
    */
-  calculateIRR(precision = 0.0001, maxIterations = 200) {
-    const p = this.params;
-    const baseResult = this.calculate();
-
-    // 构建现金流数组
-    const cashflows = this.buildCashflowArray(baseResult);
-
-    // 用牛顿迭代法求解 IRR
-    let rate = 0.1; // 初始猜测10%
-    for (let i = 0; i < maxIterations; i++) {
-      const { npv, dnpv } = this.npvAndDerivative(cashflows, rate);
-      if (Math.abs(npv) < 0.01) { // NPV < 0.01万元即视为收敛
-        return this.round2(rate * 100);
-      }
-      if (dnpv === 0) break; // 防止除零
-      const newRate = rate - npv / dnpv;
-      if (newRate < -0.5 || newRate > 5) break; // 防止发散（-50% ~ 500%）
-      rate = newRate;
-    }
-
-    // 牛顿法失败，尝试二分法
-    return this.irrBisection(cashflows, precision);
-  }
-
-  /**
-   * 构建现金流数组（绝对年份索引）
-   * 索引0 = 项目第0年（投入期），索引buildYears = 建设期末，...
-   */
-  buildCashflowArray(baseResult) {
+  buildCashflowArrayFromResult(result) {
     const p = this.params;
     const totalYears = p.buildYears + p.rentYears;
     const cashflows = new Array(totalYears + 1).fill(0);
 
     // 第0年：一次性投入总成本
-    cashflows[0] = -baseResult.cost.totalCost;
+    cashflows[0] = -result.cost.totalCost;
 
     // 第 buildYears 年：销售收入
-    cashflows[p.buildYears] += baseResult.income.aboveSalesIncome;
+    cashflows[p.buildYears] += result.income.aboveSalesIncome;
 
     // 第 buildYears+1 ~ buildYears+rentYears 年：逐年净租金
+    // 使用原始年租金（未round），避免精度累积
+    const annualCommercialRentYear1 = (
+      p.commercialRentArea * p.rentPerDay * 365 * p.occupancyRate
+    ) / 10000;
+    const parkingSpaces = p.parkingSpaces !== null && p.parkingSpaces !== undefined
+      ? p.parkingSpaces
+      : (p.parkingAreaPerSpace > 0 ? Math.round((p.undergroundNew - p.undergroundExchange) / p.parkingAreaPerSpace) : 0);
+    const annualParkingRentYear1 = (
+      parkingSpaces * p.parkingRent * 365 * p.parkingOccupancy
+    ) / 10000;
+    const annualTotalRentYear1 = annualCommercialRentYear1 + annualParkingRentYear1;
+
     for (let y = 0; y < p.rentYears; y++) {
-      const yearRent = baseResult.income.annualTotalRent * Math.pow(1 + p.rentGrowthRate, y);
+      const yearRent = annualTotalRentYear1 * Math.pow(1 + p.rentGrowthRate, y);
       const netRent = yearRent * (1 - p.operatingCostRate - p.rentTaxRate);
       cashflows[p.buildYears + y + 1] += netRent;
     }
 
     return cashflows;
+  }
+
+  // 保留旧方法名兼容
+  buildCashflowArray(baseResult) {
+    return this.buildCashflowArrayFromResult(baseResult);
+  }
+
+  /**
+   * 从现金流数组计算 IRR（改进版）
+   * 使用更宽的搜索范围和更鲁棒的收敛判断
+   * @param {number[]} cashflows 
+   * @param {number} precision 
+   * @param {number} maxIterations 
+   * @returns {number|null} IRR百分比，null表示无解
+   */
+  calculateIRRFromCashflows(cashflows, precision = 0.0001, maxIterations = 500) {
+    // 快速检查：如果所有非零现金流同号，无解
+    const nonZeroFlows = cashflows.filter(cf => cf !== 0);
+    if (nonZeroFlows.length === 0) return null;
+    const allPositive = nonZeroFlows.every(cf => cf > 0);
+    const allNegative = nonZeroFlows.every(cf => cf < 0);
+    if (allPositive || allNegative) return null;
+
+    // 尝试牛顿迭代法
+    let rate = 0.1; // 初始猜测10%
+    for (let i = 0; i < maxIterations; i++) {
+      const { npv, dnpv } = this.npvAndDerivative(cashflows, rate);
+      if (Math.abs(npv) < 0.01) {
+        return this.round2(rate * 100);
+      }
+      if (dnpv === 0) break;
+      const newRate = rate - npv / dnpv;
+      if (newRate < -0.99 || newRate > 10) break;
+      rate = newRate;
+    }
+
+    // 牛顿法失败，使用改进的二分法
+    return this.irrBisectionImproved(cashflows, precision, maxIterations);
   }
 
   /** 计算 NPV 及其对折现率的导数（牛顿法需要） */
@@ -503,22 +599,59 @@ class UrbanRenewalCalculator {
     return { npv, dnpv };
   }
 
-  /** 二分法求解 IRR（牛顿法失败时的后备） */
-  irrBisection(cashflows, precision) {
-    let low = -0.1, high = 1.0;
-    const npvLow = this.npvAndDerivative(cashflows, low).npv;
-    const npvHigh = this.npvAndDerivative(cashflows, high).npv;
+  /**
+   * 改进的二分法 IRR 求解
+   * 搜索范围：-99% 到 1000%，自动扩展
+   */
+  irrBisectionImproved(cashflows, precision = 0.0001, maxIterations = 500) {
+    let low = -0.99, high = 10.0;
+    let npvLow = this.npvAndDerivative(cashflows, low).npv;
+    let npvHigh = this.npvAndDerivative(cashflows, high).npv;
 
-    if (npvLow * npvHigh > 0) return null; // 无解区间
+    // 如果同号，尝试扩展搜索范围
+    if (npvLow * npvHigh > 0) {
+      if (npvLow > 0 && npvHigh > 0) {
+        // 两个都为正，需要更大的 high
+        high = 100.0;
+        npvHigh = this.npvAndDerivative(cashflows, high).npv;
+      } else if (npvLow < 0 && npvHigh < 0) {
+        // 两个都为负，需要更小的 low
+        low = -0.9999;
+        npvLow = this.npvAndDerivative(cashflows, low).npv;
+      }
+    }
 
-    for (let i = 0; i < 500; i++) {
+    if (npvLow * npvHigh > 0) {
+      return null; // 真的无解
+    }
+
+    for (let i = 0; i < maxIterations; i++) {
       const mid = (low + high) / 2;
       const npvMid = this.npvAndDerivative(cashflows, mid).npv;
-      if (Math.abs(npvMid) < 0.01) return this.round2(mid * 100);
-      if (npvMid * npvLow < 0) high = mid;
-      else low = mid;
+      if (Math.abs(npvMid) < 0.01) {
+        return this.round2(mid * 100);
+      }
+      if (npvMid * npvLow < 0) {
+        high = mid;
+        npvHigh = npvMid;
+      } else {
+        low = mid;
+        npvLow = npvMid;
+      }
     }
-    return null;
+
+    // 未精确收敛，返回最后一次的近似值
+    return this.round2(((low + high) / 2) * 100);
+  }
+
+  /**
+   * 计算 IRR（对外接口）
+   * 为避免递归，内部使用独立的现金流构建
+   */
+  calculateIRR(precision = 0.0001, maxIterations = 500) {
+    const baseResult = this.calculate();
+    const cashflows = this.buildCashflowArrayFromResult(baseResult);
+    return this.calculateIRRFromCashflows(cashflows, precision, maxIterations);
   }
 
   // ==================== 逐年现金流 ====================
@@ -636,7 +769,9 @@ class UrbanRenewalCalculator {
         netProfit: baseResult.netProfit,
         roi: baseResult.metrics.roi,
         npvNetProfit: baseResult.metrics.npvNetProfit,
+        irr: baseResult.metrics.irr,
         feasibility: baseResult.feasibility,
+        feasibilityLevel: baseResult.feasibilityLevel,
       },
       matrix,
     };
@@ -730,20 +865,28 @@ class UrbanRenewalCalculator {
   │ NPV-ROI：${m.npvROI.toFixed(2)}%                                     │
   └─────────────────────────────────────────────────────┘
 
-五、可行性判断：${result.feasibility}
-  ✓ 净收益 > 0：${fd.profitPositive ? '是' : '否'}
-  ✓ ROI ≥ ${(p.minimumROI*100).toFixed(0)}%：${fd.roiAboveMinimum ? '是' : '否'}
-  ✓ 回收期 ≤ ${p.maxPaybackYears}年：${fd.paybackWithinLimit ? '是' : '否'}
-  ✓ NPV > 0：${fd.npvPositive ? '是' : '否'}`.trim();
-
-    // 如果有IRR，追加
-    try {
-      const irr = this.calculateIRR();
-      if (irr !== null) {
-        report += `\n  IRR（内部收益率）：${irr.toFixed(2)}%`;
+五、可行性判断：${result.feasibility}（${result.feasibilityLevel || '-'}级）
+  综合得分：${result.feasibilityScore || '-'} / 100
+  判定条件：
+    ✓ 净收益 > 0：${fd.profitPositive ? '是' : '否'}
+    ✓ ROI ≥ ${(p.minimumROI*100).toFixed(0)}%：${fd.roiAboveMinimum ? '是' : '否'}
+    ✓ 回收期 ≤ ${p.maxPaybackYears}年：${fd.paybackWithinLimit ? '是' : '否'}
+    ✓ NPV > 0：${fd.npvPositive ? '是' : '否'}
+    ✓ IRR > 折现率${(p.discountRate*100).toFixed(1)}%：${fd.irrAboveHurdle ? '是' : '否'}`;
+    
+    // IRR 直接显示（从 result.metrics 获取，避免重复计算）
+    if (m.irr !== null && m.irr !== undefined) {
+      report += `\n  IRR（内部收益率）：${m.irr.toFixed(2)}%`;
+    } else {
+      report += `\n  IRR（内部收益率）：未能计算（${m.irrStatus || '未知原因'}）`;
+    }
+    
+    // 风险说明
+    if (result.feasibilityRiskNotes && result.feasibilityRiskNotes.length > 0) {
+      report += `\n\n  ⚠ 风险说明：`;
+      for (const note of result.feasibilityRiskNotes) {
+        report += `\n    - ${note}`;
       }
-    } catch (e) {
-      // IRR 计算失败时不追加
     }
 
     return report;
@@ -757,7 +900,7 @@ class UrbanRenewalCalculator {
     let report = `
 === 敏感性分析报告 ===
 
-基准值：净收益 ${base.netProfit.toLocaleString()} 万元 | ROI ${base.roi.toFixed(2)}% | NPV净收益 ${base.npvNetProfit.toLocaleString()} 万元 | 可行性: ${base.feasibility}
+基准值：净收益 ${base.netProfit.toLocaleString()} 万元 | ROI ${base.roi.toFixed(2)}% | NPV净收益 ${base.npvNetProfit.toLocaleString()} 万元 | IRR ${base.irr !== null && base.irr !== undefined ? base.irr.toFixed(2) + '%' : '--'} | 可行性: ${base.feasibility}（${base.feasibilityLevel || '-'}级）
 
 ┌───────────────────敏感性矩阵───────────────────┐`;
 
