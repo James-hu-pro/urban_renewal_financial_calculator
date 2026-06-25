@@ -262,9 +262,14 @@ test('比率越界校验（>1）', () => {
   if (v.valid) throw new Error('occupancyRate>1应校验失败');
 });
 
-test('exchangeRatio ≤ 0 校验', () => {
+test('exchangeRatio < 0 校验', () => {
+  const v = validateFinancialParams({ exchangeRatio: -0.5 });
+  if (v.valid) throw new Error('exchangeRatio<0应校验失败');
+});
+
+test('exchangeRatio = 0 允许（全部收储模式）', () => {
   const v = validateFinancialParams({ exchangeRatio: 0 });
-  if (v.valid) throw new Error('exchangeRatio=0应校验失败');
+  if (!v.valid) throw new Error('exchangeRatio=0应通过校验（全部收储模式）');
 });
 
 test('exchangeRatio > 3 校验', () => {
@@ -357,6 +362,29 @@ test('净收益>0 + ROI≥8% + 回收期≤15年 → "可行"', () => {
   if (result.feasibilityDetail.profitPositive !== true) throw new Error('大方案净收益应>0');
 });
 
+test('exchangeRatio=0时全部收储模式（直接征收重建）', () => {
+  // 直接征收重建：无产权调换，全部新建可售
+  const result = calculateFinancialPlan({
+    originalArea: 6000,
+    aboveGroundNew: 10000,
+    undergroundNew: 5000,
+    exchangeRatio: 0,  // 全部货币化补偿，无产权调换
+    aboveGroundSalesArea: null,  // 使用全部超配面积
+    salesPrice: 15000,
+    commercialRentArea: 2000,
+    aboveGroundUnitPrice: 4300,
+    undergroundUnitPrice: 6000,
+  });
+  // 调换面积应为0
+  if (result.area.aboveGroundExchange !== 0) throw new Error(`地上调换面积应为0，实际: ${result.area.aboveGroundExchange}`);
+  if (result.area.undergroundExchange !== 0) throw new Error(`地下调换面积应为0，实际: ${result.area.undergroundExchange}`);
+  // 超配面积 = 新建面积（全部可售）
+  if (result.area.aboveSurplus !== 10000) throw new Error(`地上超配面积应为10000，实际: ${result.area.aboveSurplus}`);
+  if (result.area.belowSurplus !== 5000) throw new Error(`地下超配面积应为5000，实际: ${result.area.belowSurplus}`);
+  // 全部地上面积可售
+  if (result.income.aboveSalesArea !== 10000) throw new Error(`可售面积应为10000，实际: ${result.income.aboveSalesArea}`);
+});
+
 test('可行性多条件判断', () => {
   // 极端场景：巨大成本、零收入
   const result = calculateFinancialPlan({
@@ -365,15 +393,23 @@ test('可行性多条件判断', () => {
     salesPrice: 0, commercialRentArea: 0, parkingSpaces: 0,
     aboveGroundUnitPrice: 4300, undergroundUnitPrice: 6000,
   });
-  if (result.feasibility !== '不可行') throw new Error(`应为不可行，实际: ${result.feasibility}`);
+  // 新判定体系：零收入+高成本 = 严重亏损（F级）
+  if (!result.feasibility.includes('严重亏损') && !result.feasibility.includes('不可行')) {
+    throw new Error(`应为严重亏损或不可行，实际: ${result.feasibility}`);
+  }
+  if (result.feasibilityLevel !== 'F') throw new Error(`应为F级，实际: ${result.feasibilityLevel}`);
 });
 
-test('ROI不达标但净收益>0时标记为"基本可行"', () => {
-  // 使用默认参数（净收益>0），但设 minimumROI=100%（几乎不可能达标）
-  const result = calculateFinancialPlan({ minimumROI: 1.0 });
-  if (!result.feasibilityDetail.profitPositive) throw new Error('默认大方案净收益应>0');
-  if (result.feasibilityDetail.roiAboveMinimum) throw new Error('ROI不应达标（要求100%）');
-  if (!result.feasibility.includes('基本可行')) throw new Error(`应为基本可行，实际: ${result.feasibility}`);
+test('默认参数下判定为严重亏损（一票否决生效）', () => {
+  // 默认参数下：NPV为负、回收期68年、IRR为负，应判定为F级
+  const result = calculateFinancialPlan({});
+  if (result.feasibilityLevel !== 'F') throw new Error(`默认参数应为F级，实际: ${result.feasibilityLevel}，feasibility=${result.feasibility}`);
+  if (!result.feasibility.includes('严重亏损')) throw new Error('应包含"严重亏损"');
+  if (result.feasibilityDetail.npvPositive) throw new Error('NPV应为负');
+  if (result.metrics.paybackPeriod <= 30) throw new Error('回收期应超过2倍上限');
+  // IRR 应被计算并显示
+  if (result.metrics.irr === undefined) throw new Error('metrics应包含irr');
+  if (result.metrics.irr === null) throw new Error('默认参数下IRR应能计算（即使为负）');
 });
 
 // ============================================================
@@ -568,7 +604,13 @@ test('默认参数大方案计算结果完整性', () => {
   if (result.income.totalIncome <= 0) throw new Error('总收入>0');
   if (result.cost.totalCost <= 0) throw new Error('总成本>0');
   if (typeof result.netProfit !== 'number') throw new Error('净收益为数字');
-  if (!['可行', '基本可行（需关注风险）', '不可行'].includes(result.feasibility)) throw new Error('可行性判断');
+  // 新判定体系包含6个等级：A/B/C/D/E/F
+  const validLevels = ['优秀项目', '可行', '边界可行（需大幅优化）', '高风险（不建议投资）', '不可行', '严重亏损（建议终止）'];
+  if (!validLevels.includes(result.feasibility)) throw new Error(`可行性判断不在有效列表中: ${result.feasibility}`);
+  if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(result.feasibilityLevel)) throw new Error(`可行性等级无效: ${result.feasibilityLevel}`);
+  if (result.metrics.irr === undefined) throw new Error('metrics应包含irr');
+  if (result.feasibilityScore === undefined) throw new Error('应包含feasibilityScore');
+  if (!Array.isArray(result.feasibilityRiskNotes)) throw new Error('feasibilityRiskNotes应为数组');
 });
 
 test('销售单价为0时销售收入为0', () => {
